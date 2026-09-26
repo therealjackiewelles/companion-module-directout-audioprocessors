@@ -51,3 +51,13 @@ Besides the fixed actions and feedbacks, the custom feadback gives the opportuni
 
 To make things even easier, a selection of presets is provided with the module. The color scheme for the presets can be adjusted in the module configuration.  
 Due to the vast number of parameters and possible combinations, presets are only given for one channel or item. Use a preset as a starting point and edit it to reflect your needed channel.
+
+### Offline Editing
+
+Every time the module connects to a device, it saves a snapshot of the device state (device type, channel names, settings) in the connection configuration. When no device is connected, the module loads this snapshot, so all dropdowns show your named channels and you can build and edit buttons without the device, e.g. while travelling. Leave the Device IP empty to work fully offline.
+
+The snapshot travels with Companion configuration exports, so it can be captured once at the device and shared. Actions are not sent while offline. Use _Delete saved snapshot on save_ in the connection settings to discard it, or uncheck _Use saved snapshot when offline_ to disable it.
+
+### Rotary Faders
+
+The gain actions (Output, Sum Bus, Flex Channel and Group gain) have a _Step along fader curve_ option in incremental mode. The increment is then a percentage of fader travel instead of dB, so an encoder moves in big steps at the bottom of the fader and fine steps near 0 dB, like a real fader. Put the action with an increment of `1` on _rotate right_ and `-1` on _rotate left_. The shape is set with _Rotary fader curve_ in the connection settings (1 = linear dB, default 3, which puts 0 dB at about 70 % of fader travel).

@@ -18,7 +18,7 @@ import {
 	CompanionRecordedAction,
 	CompanionButtonStyleProps,
 } from '@companion-module/base'
-import { GetConfigFields, type ModuleConfig } from './config.js'
+import { GetConfigFields, readOfflineSnapshot, type ModuleConfig } from './config.js'
 import { getStaticVariableDefinitions } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { returnActionDefinitions } from './actions.js'
@@ -35,6 +35,8 @@ import {
 	enrichDropdown,
 	getPathFromKey,
 	insertPathOptions,
+	dbToFader,
+	faderToDb,
 } from './utils.js'
 import {
 	DOstate,
@@ -56,6 +58,9 @@ import { returnPresetDefinitions } from './presets.js'
  * Main class of the module to interact with the device.
  *
  */
+/** default exponent of the rotary fader curve */
+const DEFAULT_FADER_CURVE = 3
+
 export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 	/** The TCP port of the device */
 	static port = 5003
@@ -145,6 +150,10 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 		})
 
 		this.updateDefaultDefaultStyle()
+
+		if (this.loadOfflineSnapshot() && this.config.host === '') {
+			this.updateStatus(InstanceStatus.Ok, 'Offline, using saved snapshot')
+		}
 
 		if (this.config.host !== '') {
 			this.log('debug', `Starting connection to ${this.config.host}:${DirectoutInstance.port}`)
@@ -340,6 +349,18 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 				}
 				options.push({ ...option } as unknown as SomeCompanionActionInputField)
 
+				if (param.fader) {
+					options.push({
+						id: `${baseId}_faderCurve`,
+						label: `Step ${label} along fader curve`,
+						type: 'checkbox',
+						default: true,
+						isVisibleExpression: `$(options:${baseId}_incrementalToggle) == true`,
+						tooltip:
+							'When checked, the increment is a percentage of fader travel, mapped to dB with the fader curve from the connection settings. Use e.g. 1 and -1 on the rotate actions of an encoder.',
+					})
+				}
+
 				option.id = `${baseId}_incrementalValue`
 				option.type = 'number'
 				option.label = `${label} (inc)`
@@ -510,7 +531,20 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 							} else {
 								if (options[`${thisKey}_incrementalToggle`] == true) {
 									const currentValue = Number(self.getPath(thisPath))
-									value = currentValue + Number(options[`${thisKey}_incrementalValue`])
+									const increment = Number(options[`${thisKey}_incrementalValue`])
+									if (param.fader && options[`${thisKey}_faderCurve`] == true) {
+										const min = param.min ?? 0
+										const max = param.max ?? 1024
+										const step = param.step ?? 1
+										const curve = Math.max(Number(self.config.fader_curve) || DEFAULT_FADER_CURVE, 1)
+										const position = dbToFader(currentValue, min, max, curve) + increment / 100
+										value = faderToDb(position, min, max, curve)
+										// make sure every click of the encoder moves at least one step
+										if (increment !== 0 && Math.abs(value - currentValue) < step)
+											value = currentValue + Math.sign(increment) * step
+									} else {
+										value = currentValue + increment
+									}
 								} else {
 									value = Number(options[thisKey])
 								}
@@ -967,6 +1001,12 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 	 * @returns
 	 */
 	async startConnection(host: string, port: number): Promise<void> {
+		if (host === '' && this.config.offline_mode !== false && readOfflineSnapshot(this.config) !== undefined) {
+			this.socket?.destroy()
+			delete this.socket
+			this.updateStatus(InstanceStatus.Ok, 'Offline, using saved snapshot')
+			return
+		}
 		this.updateStatus(InstanceStatus.Connecting)
 		if (!host.match(new RegExp(Regex.IP.split('/')[1]))) {
 			this.log('error', 'Invalid host address')
@@ -1080,36 +1120,9 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 					// this.log('debug', 'Received get_resp response: ' + data)
 				} else {
 					// root
-					this.updateState(response.payload)
-					// ' + JSON.stringify(this.state, null, 2).substring(0, 1500))
-					this.devicetype = this.getState('/device_info/model')
-					if (this.devicetype === undefined) {
-						this.log('error', `Can't read device type, connection failed.`)
-						return
-					}
-					let fpga_version = ''
-					if (this.devicetype.startsWith('MAVEN')) {
-						fpga_version = this.getState('/device_info/version_fpga')
-					} else {
-						fpga_version = `v${this.getState('/device_info/FPGA_FW_rev/0')}.${this.getState('/device_info/FPGA_FW_rev/1')} b${this.getState('/device_info/FPGA_FW_build/0')}${this.getState('/device_info/FPGA_FW_build/1')}`
-					}
-					this.log(
-						'info',
-						`Root GET, New state received
-	Model Type: ${this.devicetype}
-	System Build: ${this.getState('/device_info/image_build/0')} (${this.getState('/device_info/image_build/1')})
-	FPGA Version: ${fpga_version}
-	CORED Version: ${this.getState('/device_info/cored_tag')}
-	Serial Number: ${this.getState('/device_info/serial_number')}`,
-					)
-					this.updateAllTranslations()
-					this.updateAllChoices()
-					this.updateAllDefinitions()
-					this.initSubscriptions()
-					this.checkFeedbacks()
-					this.setVariableValues({
-						routing_source_of_selected_destination: this.getCurrentSourceForDestination(this.routingSelectedSource),
-					})
+					this.state = {}
+					if (!this.applyRootState(response.payload)) return
+					this.saveOfflineSnapshot(response.payload)
 				}
 			}
 
@@ -1123,6 +1136,72 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 			this.log('error', 'Received response with unexpected type: ' + response.type)
 			return
 		}
+	}
+
+	/**
+	 * Apply a full device state (root GET response) and rebuild all definitions from it
+	 * @param payload the root state as sent by the device or loaded from the offline snapshot
+	 * @returns true if the state could be applied
+	 */
+	// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
+	applyRootState(payload: any): boolean {
+		this.updateState(payload)
+		// ' + JSON.stringify(this.state, null, 2).substring(0, 1500))
+		this.devicetype = this.getState('/device_info/model')
+		if (this.devicetype === undefined) {
+			this.log('error', `Can't read device type, connection failed.`)
+			return false
+		}
+		let fpga_version = ''
+		if (this.devicetype.startsWith('MAVEN')) {
+			fpga_version = this.getState('/device_info/version_fpga')
+		} else {
+			fpga_version = `v${this.getState('/device_info/FPGA_FW_rev/0')}.${this.getState('/device_info/FPGA_FW_rev/1')} b${this.getState('/device_info/FPGA_FW_build/0')}${this.getState('/device_info/FPGA_FW_build/1')}`
+		}
+		this.log(
+			'info',
+			`Root GET, New state received
+	Model Type: ${this.devicetype}
+	System Build: ${this.getState('/device_info/image_build/0')} (${this.getState('/device_info/image_build/1')})
+	FPGA Version: ${fpga_version}
+	CORED Version: ${this.getState('/device_info/cored_tag')}
+	Serial Number: ${this.getState('/device_info/serial_number')}`,
+		)
+		this.updateAllTranslations()
+		this.updateAllChoices()
+		this.updateAllDefinitions()
+		this.initSubscriptions()
+		this.checkFeedbacks()
+		this.setVariableValues({
+			routing_source_of_selected_destination: this.getCurrentSourceForDestination(this.routingSelectedSource),
+		})
+		return true
+	}
+
+	/**
+	 * Store the full device state in the connection config, so it can be used when no device is connected
+	 * @param payload the root state as sent by the device
+	 */
+	// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
+	saveOfflineSnapshot(payload: any): void {
+		const snapshot = JSON.stringify({ model: this.devicetype, savedAt: new Date().toISOString(), payload })
+		this.config = { ...this.config, offline_snapshot: snapshot, offline_clear: false }
+		this.saveConfig(this.config)
+		this.log('info', `Saved offline snapshot of ${this.devicetype} (${Math.round(snapshot.length / 1024)} kB)`)
+	}
+
+	/**
+	 * Load the saved offline snapshot, if enabled and available, while no device is connected
+	 * @returns true if a snapshot has been loaded
+	 */
+	loadOfflineSnapshot(): boolean {
+		if (this.config.offline_mode === false) return false
+		const snapshot = readOfflineSnapshot(this.config)
+		if (snapshot === undefined) return false
+		this.state = {}
+		if (!this.applyRootState(snapshot.payload)) return false
+		this.log('info', `Loaded offline snapshot of ${snapshot.model} captured ${snapshot.savedAt}`)
+		return true
 	}
 
 	/**
@@ -1465,6 +1544,15 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 	async configUpdated(config: ModuleConfig): Promise<void> {
 		const oldconf = { ...this.config }
 		this.config = config
+		if (this.config.offline_clear) {
+			this.config = { ...this.config, offline_snapshot: '', offline_clear: false }
+			this.saveConfig(this.config)
+			this.log('info', 'Deleted offline snapshot')
+		}
+		const connected = this.socket?.isConnected === true
+		if (!connected && this.config.offline_mode !== oldconf.offline_mode && this.loadOfflineSnapshot()) {
+			if (this.config.host === '') this.updateStatus(InstanceStatus.Ok, 'Offline, using saved snapshot')
+		}
 		if (this.config.host !== oldconf.host) {
 			void this.startConnection(this.config.host, DirectoutInstance.port)
 		}
@@ -1508,7 +1596,7 @@ export class DirectoutInstance extends InstanceBase<ModuleConfig> {
 	 * Return config fields for web config
 	 */
 	getConfigFields(): SomeCompanionConfigField[] {
-		return GetConfigFields()
+		return GetConfigFields(this.config)
 	}
 
 	/**
