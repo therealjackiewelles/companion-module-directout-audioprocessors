@@ -7,6 +7,35 @@ See the issues section for known bugs or feature requests.
 
 This modules interfaces the audio processors of the PRODIGY and MAVEN series with Companion.
 
+## Fork change log
+
+This fork (therealjackiewelles/companion-module-directout-audioprocessors) adds offline editing and rotary fader control on top of the official DirectOut module. Newest entries first. Times are UTC.
+
+### 2026-09-26 00:37 UTC: offline snapshot and fader curve merged into main
+
+Commit `d352e0a` (written 2026-09-26 00:27 UTC), merged via PR #1 as `5bd8ade`. Not yet tested on a real PRODIGY/MAVEN or in Companion.
+
+- feature: **offline snapshot**. Each time the module connects to a device it saves the device state (device type, channel names, settings) in the connection configuration. With no device connected it loads that snapshot, so dropdowns show your named channels and you can build pages offline (e.g. in a hotel). Leave the Device IP empty to work fully offline. Actions are not sent while offline. The snapshot travels with Companion config exports. New connection settings: _Use saved snapshot when offline_ and _Delete saved snapshot on save_.
+- feature: **fader curve for rotary encoders**. The gain actions (Output, Sum Bus, Flex Channel and Group gain) get a _Step along fader curve_ option in incremental mode. The increment becomes a percentage of fader travel instead of dB: big steps at the bottom, fine steps near 0 dB. Use `1` on _rotate right_ and `-1` on _rotate left_. The curve shape is the new connection setting _Rotary fader curve_ (1 = linear dB, default 3, which puts 0 dB at about 70 % of fader travel).
+- Files changed: `src/config.ts`, `src/main.ts`, `src/parameters.ts`, `src/utils.ts`, `companion/HELP.md`.
+
+### 2026-09-26: fork created
+
+Forked from bitfocus/companion-module-directout-audioprocessors at v1.1.0 plus dependency updates up to `09e468a` (2026-09-11).
+
+## Building and importing into Companion
+
+Requires Companion 4.0 or newer, Node.js 22 and Yarn 4 (run `corepack enable` once to get Yarn).
+
+1. Clone this repository and run `yarn install` in it.
+2. Run `yarn package`. This builds the module and writes a `.tgz` package into the repository folder.
+3. In Companion, open the **Modules** page, choose **Import module package**, and select the `.tgz` file.
+4. Add or edit a DirectOut connection and pick the imported version of the module.
+
+Alternative for development: in the Companion launcher settings, set a **Developer modules path** to the folder that contains this repository, run `yarn build` (or `yarn dev` to rebuild on every change), and Companion loads the module from that folder.
+
+The fork keeps the module id `directout-audioprocessors`, so it shows up as another version of the DirectOut module rather than a separate module.
+
 ## :rocket: Version History
 
 ### 1.1.0 (2026-06-04)
