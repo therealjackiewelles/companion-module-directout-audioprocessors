@@ -168,3 +168,32 @@ export function contrastcolor(color: string | number): number {
 
 // 	return { value: parameterValue, translation: translationTable }
 // }
+
+/**
+ * Convert a gain in dB to a fader position from 0 to 1.
+ * The position is ((dB - min) / (max - min)) ^ curve, so curve 1 is linear in dB and
+ * higher values give coarse steps at the bottom of the fader and fine steps near the top.
+ * @param db the gain in dB
+ * @param min the minimum gain of the parameter
+ * @param max the maximum gain of the parameter
+ * @param curve the exponent of the fader curve, 1 or more
+ * @returns fader position from 0 to 1
+ */
+export function dbToFader(db: number, min: number, max: number, curve: number): number {
+	if (max <= min) return 0
+	const normalized = Math.min(Math.max((db - min) / (max - min), 0), 1)
+	return Math.pow(normalized, curve)
+}
+
+/**
+ * Convert a fader position from 0 to 1 to a gain in dB, inverse of dbToFader
+ * @param position the fader position from 0 to 1
+ * @param min the minimum gain of the parameter
+ * @param max the maximum gain of the parameter
+ * @param curve the exponent of the fader curve, 1 or more
+ * @returns the gain in dB
+ */
+export function faderToDb(position: number, min: number, max: number, curve: number): number {
+	const clamped = Math.min(Math.max(position, 0), 1)
+	return min + (max - min) * Math.pow(clamped, 1 / curve)
+}

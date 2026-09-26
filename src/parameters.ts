@@ -28,6 +28,8 @@ export type Option = {
 	step?: number
 	/** optionally control of incremental entry mode, true if omitted */
 	incremental?: boolean
+	/** number is a gain in dB that can be stepped along a fader curve in incremental mode */
+	fader?: boolean
 }
 
 export type ParameterOption = Option & {
@@ -467,6 +469,7 @@ export function returnParameters(self: DirectoutInstance): Parameters {
 					min: -144,
 					max: 18,
 					step: 0.1,
+					fader: true,
 					default: 0,
 				},
 			],
@@ -702,6 +705,7 @@ export function returnParameters(self: DirectoutInstance): Parameters {
 					min: -144,
 					max: 18,
 					step: 0.1,
+					fader: true,
 					default: 0,
 				},
 			],
@@ -1409,6 +1413,7 @@ export function returnParameters(self: DirectoutInstance): Parameters {
 					min: -144,
 					max: 18,
 					step: 0.1,
+					fader: true,
 					default: 0,
 				},
 			],
@@ -1725,6 +1730,7 @@ export function returnParameters(self: DirectoutInstance): Parameters {
 					min: -144,
 					max: 18,
 					step: 0.1,
+					fader: true,
 				},
 			],
 		},
